@@ -1,6 +1,5 @@
-from collections import Iterable
+from collections.abc import Iterable
 import io
-import re
 import subprocess
 
 import cv2
@@ -11,13 +10,25 @@ subtitles_path = "subtitles.srt"
 subtitles_lang = "fra"
 align_on_hardsubs = False
 align_frames = 5
-align_from = 3*60 # seconds
+align_from = 3*60  # seconds
 
 softsub_video = cv2.VideoCapture(softsub_path)
 hardsub_video = cv2.VideoCapture(hardsub_path)
 
 softsub_fps = softsub_video.get(cv2.CAP_PROP_FPS)
 hardsub_fps = hardsub_video.get(cv2.CAP_PROP_FPS)
+
+replacements = [
+	# Unicode
+	("\n—", "\n-"),
+	("…", "..."),
+	("‘", "'"),
+
+	# French
+	("II", "Il"),
+	("I'", "l'"),
+]
+
 
 def median(numbers):
 	numbers = sorted(numbers)
@@ -27,6 +38,7 @@ def median(numbers):
 	else:
 		return numbers[center]
 
+
 def frame_sum(frame):
 	height, width = frame.shape[:2]
 	s = sum(cv2.reduce(frame, 1, cv2.REDUCE_SUM, dtype=cv2.CV_32S))[0]
@@ -34,10 +46,12 @@ def frame_sum(frame):
 		s = sum(s)
 	return s / (height * width)
 
+
 def frame_diff(a, b):
 	diff = cv2.subtract(a, b)
 	#diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
 	return frame_sum(diff)
+
 
 def find_key_frames(video, threshold=70):
 	key_frames = {}
@@ -48,7 +62,7 @@ def find_key_frames(video, threshold=70):
 	ok, last = video.read()
 	if not ok:
 		return key_frames
-	while(len(key_frames) < align_frames):
+	while len(key_frames) < align_frames:
 		ok, current = video.read()
 		if not ok:
 			break
@@ -69,6 +83,7 @@ def find_key_frames(video, threshold=70):
 	cv2.destroyAllWindows()
 
 	return key_frames
+
 
 def match_keyframes(softsub_frames, hardsub_frames, max_diff=10):
 	matches = []
@@ -102,6 +117,7 @@ def match_keyframes(softsub_frames, hardsub_frames, max_diff=10):
 
 	return median(matches)
 
+
 def ocr(img):
 	ok, buf = cv2.imencode(".bmp", img)
 	if not ok:
@@ -123,22 +139,13 @@ def ocr(img):
 
 	return "\n".join(lines)
 
+
 def timecode(ms):
 	s, ms = divmod(ms, 1000)
 	min, s = divmod(s, 60)
 	h, min = divmod(min, 60)
 	return "{:02}:{:02}:{:02},{:03}".format(h, min, s, ms)
 
-replacements = [
-	# Unicode
-	("\n—", "\n-"),
-	("…", "..."),
-	("‘", "'"),
-
-	# French
-	("II", "Il"),
-	("I'", "l'"),
-]
 
 def cleanup(text):
 	text = "\n"+text+"\n"
@@ -147,6 +154,7 @@ def cleanup(text):
 		text = text.replace(a, b)
 
 	return text.strip()
+
 
 def extract_subs(f, softsub_video, hardsub_video, pos_diff_sec):
 	threshold = 5
@@ -212,7 +220,7 @@ def extract_subs(f, softsub_video, hardsub_video, pos_diff_sec):
 		if align_on_hardsubs:
 			t = hardsub_t
 
-		if s > 0.1 and s < threshold:
+		if 0.1 < s < threshold:
 			if sub_frame is None:
 				sub_frame = diff
 				sub_start = int(t * 1000)
@@ -243,25 +251,27 @@ def extract_subs(f, softsub_video, hardsub_video, pos_diff_sec):
 
 	cv2.destroyAllWindows()
 
-print("Aligning videos on {} frames...".format(align_frames))
 
-softsub_video.set(cv2.CAP_PROP_POS_FRAMES, align_from * softsub_fps)
-hardsub_video.set(cv2.CAP_PROP_POS_FRAMES, align_from * hardsub_fps)
-softsub_key_frames = find_key_frames(softsub_video)
-hardsub_key_frames = find_key_frames(hardsub_video)
-softsub_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
-hardsub_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+if __name__ == "__main__":
+	print("Aligning videos on {} frames...".format(align_frames))
 
-# pos_diff_sec = softsub_pos - hardsub_pos
-pos_diff_sec = match_keyframes(softsub_key_frames, hardsub_key_frames)
-print("pos_diff_sec={}".format(pos_diff_sec))
+	softsub_video.set(cv2.CAP_PROP_POS_FRAMES, align_from * softsub_fps)
+	hardsub_video.set(cv2.CAP_PROP_POS_FRAMES, align_from * hardsub_fps)
+	softsub_key_frames = find_key_frames(softsub_video)
+	hardsub_key_frames = find_key_frames(hardsub_video)
+	softsub_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+	hardsub_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-print("Writing {} subtitles to {}...".format(subtitles_lang, subtitles_path))
+	# pos_diff_sec = softsub_pos - hardsub_pos
+	pos_diff_sec = match_keyframes(softsub_key_frames, hardsub_key_frames)
+	print("pos_diff_sec={}".format(pos_diff_sec))
 
-with open(subtitles_path, "w") as f:
-	extract_subs(f, softsub_video, hardsub_video, pos_diff_sec)
+	print("Writing {} subtitles to {}...".format(subtitles_lang, subtitles_path))
 
-softsub_video.release()
-hardsub_video.release()
+	with open(subtitles_path, "w") as f:
+		extract_subs(f, softsub_video, hardsub_video, pos_diff_sec)
 
-cv2.destroyAllWindows()
+	softsub_video.release()
+	hardsub_video.release()
+
+	cv2.destroyAllWindows()
